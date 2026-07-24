@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#2c1250">
+<title>BS Açaiteria — Gestão</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+
+<!-- Firebase (Firestore) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- jsPDF para exportar relatórios -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+<div id="undoToast" class="undo-toast">
+  <span id="undoText"></span>
+  <button id="undoBtn">Desfazer</button>
+</div>
+
+<!-- ===== TELA DE LOGIN (PIN) ===== -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <img src="logo-small.png" alt="BS Açaiteria" class="login-logo">
+    <h1>BS Açaiteria</h1>
+    <p class="login-sub">Digite seu PIN de acesso</p>
+    <div class="pin-dots" id="pinDots">
+      <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="pin-error" id="pinError"></div>
+    <div class="pin-pad">
+      <button class="pin-key" data-key="1">1</button>
+      <button class="pin-key" data-key="2">2</button>
+      <button class="pin-key" data-key="3">3</button>
+      <button class="pin-key" data-key="4">4</button>
+      <button class="pin-key" data-key="5">5</button>
+      <button class="pin-key" data-key="6">6</button>
+      <button class="pin-key" data-key="7">7</button>
+      <button class="pin-key" data-key="8">8</button>
+      <button class="pin-key" data-key="9">9</button>
+      <button class="pin-key pin-key-ghost" data-key="clear">C</button>
+      <button class="pin-key" data-key="0">0</button>
+      <button class="pin-key pin-key-ghost" data-key="back">⌫</button>
+    </div>
+    <div class="login-status" id="syncStatus">🔄 Conectando à nuvem...</div>
+  </div>
+</div>
+
+<!-- ===== TEMPLATE DE IMPRESSÃO (COMANDA) ===== -->
+<div id="printArea" class="print-area"></div>
+
+<div class="app" id="mainApp" style="display:none;">
+
+  <!-- ===== HEADER / NAV ===== -->
+  <header class="topbar">
+    <div class="logo">
+      <img src="logo-small.png" alt="BS Açaiteria" class="logo-badge">
+    </div>
+    <nav class="tabs" id="mainTabs">
+      <button class="tab-btn active" data-tab="venda" data-roles="dono,atendente">🛒 Venda</button>
+      <button class="tab-btn" data-tab="gestao" data-roles="dono">
+        ⚙️ Gestão
+        <span class="notif-badge" id="histBadge" style="display:none;">0</span>
+      </button>
+      <button class="tab-btn" data-tab="comanda" data-roles="dono,cozinha">🍳 Comanda</button>
+      <button class="tab-btn" data-tab="entrega" data-roles="dono,entregador">🛵 Entrega</button>
+    </nav>
+    <div class="topbar-actions">
+      <span class="user-chip" id="userChip"></span>
+      <button class="icon-btn" id="logoutBtn" title="Sair">🚪</button>
+    </div>
+  </header>
+
+  <!-- ===== ALERTA DE ESTOQUE CRÍTICO ===== -->
+  <div class="alert-banner" id="alertBanner" style="display:none;">
+    <span id="alertText"></span>
+    <button id="alertClose">✕</button>
+  </div>
+
+  <!-- ===== TELA: GESTÃO (menu de categorias, estilo Configurações) ===== -->
+  <section class="screen" id="screen-gestao">
+    <div class="card">
+      <h2 class="card-title">⚙️ Gestão</h2>
+      <div class="settings-list">
+        <div class="settings-row" data-goto="entrada">
+          <div class="settings-icon">📦</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Estoque</div>
+            <div class="settings-desc">Cadastrar itens, quantidades, lista de compras</div>
+          </div>
+          <div class="settings-arrow">›</div>
+        </div>
+        <div class="settings-row" data-goto="produtos">
+          <div class="settings-icon">🍇</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Produtos</div>
+            <div class="settings-desc">Criar copos, preços, fotos, descrições</div>
+          </div>
+          <div class="settings-arrow">›</div>
+        </div>
+        <div class="settings-row" data-goto="financeiro">
+          <div class="settings-icon">💰</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Financeiro</div>
+            <div class="settings-desc">Relatórios, gráficos, exportar PDF</div>
+          </div>
+          <div class="settings-arrow">›</div>
+        </div>
+        <div class="settings-row" data-goto="historico">
+          <div class="settings-icon">🧾</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Histórico de vendas</div>
+            <div class="settings-desc">Buscar vendas, pedidos do QR code, excluir</div>
+          </div>
+          <div class="settings-arrow">›</div>
+          <span class="notif-badge" id="histBadge2" style="display:none;">0</span>
+        </div>
+        <div class="settings-row" data-goto="usuarios">
+          <div class="settings-icon">👥</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Usuários e Acesso</div>
+            <div class="settings-desc">PINs de Dono, Atendente e Cozinha</div>
+          </div>
+          <div class="settings-arrow">›</div>
+        </div>
+        <div class="settings-row" data-goto="loja">
+          <div class="settings-icon">🔧</div>
+          <div class="settings-texts">
+            <div class="settings-titulo">Configurações da loja</div>
+            <div class="settings-desc">Chave Pix, backup, link do cardápio digital</div>
+          </div>
+          <div class="settings-arrow">›</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TELA 1: ENTRADA DE PRODUTOS (dentro de "Estoque") ===== -->
+  <section class="screen" id="screen-entrada">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="grid-2">
+
+      <div class="card">
+        <div class="field-row">
+          <input type="text" id="ent-nome" placeholder="Nome do produto" class="pill-input">
+          <input type="text" id="ent-marca" placeholder="Marca" class="pill-input">
+        </div>
+        <div class="cup-visual"><div class="cup"><div class="cup-liquid"></div></div></div>
+        <div class="field-stack">
+          <input type="number" step="0.01" id="ent-valor" placeholder="Valor de compra (R$)" class="pill-input">
+          <div class="field-row">
+            <select id="ent-unidade" class="pill-input">
+              <option value="L">Litros (L)</option>
+              <option value="Kg">Quilos (Kg)</option>
+              <option value="Un">Unidade (Un)</option>
+              <option value="g">Gramas (g)</option>
+              <option value="ml">Mililitros (ml)</option>
+            </select>
+            <input type="number" step="0.01" id="ent-qtd" placeholder="Quantidade" class="pill-input">
+          </div>
+          <div class="chip-row" id="ent-tipo-buttons">
+            <button type="button" class="chip tipo-chip active" data-tipo="Produto pronto">Produto pronto</button>
+            <button type="button" class="chip tipo-chip" data-tipo="Condimento">Condimento</button>
+            <button type="button" class="chip tipo-chip" data-tipo="Matéria-prima">Matéria-prima</button>
+          </div>
+          <input type="text" id="ent-tipo" placeholder="Tipo (ex: Matéria-prima, Condimento, Unidade)" class="pill-input" style="display:none;">
+          <input type="text" id="ent-fornecedor" placeholder="Contato do fornecedor" class="pill-input">
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="ent-is-adicional">
+          <span>🥄 Este item é um adicional (aparece no "Criar copo")</span>
+        </label>
+        <div class="field-row" id="ent-adicional-fields" style="display:none;">
+          <input type="number" step="0.01" id="ent-adicional-preco" placeholder="Preço de venda do adicional (R$)" class="pill-input">
+          <input type="number" step="0.01" id="ent-adicional-porcao" placeholder="Qtd usada por porção" class="pill-input">
+        </div>
+        <div class="emoji-picker-wrap">
+          <span class="emoji-picker-label">Escolha até 3 emojis (opcional):</span>
+          <div class="emoji-picker" id="ent-emoji-picker"></div>
+        </div>
+        <button class="btn-confirm" id="ent-add">✅ Adicionar</button>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Lista de entrada</h2>
+        <div class="search-row">
+          <input type="text" id="ent-search" placeholder="Pesquisar..." class="pill-input small">
+        </div>
+        <div class="scroll-list" id="ent-list"></div>
+      </div>
+
+    </div>
+
+    <div class="grid-2" style="margin-top:16px;">
+      <div class="col-left">
+        <div class="card">
+          <div class="section-header-row">
+            <h2 class="card-title">Estoque</h2>
+            <div class="valor-estoque-badge" id="estoque-valor-total">R$ 0,00</div>
+          </div>
+          <div class="chip-row" id="estoque-cat-toggle">
+            <button class="chip" data-cat="Produto pronto">Produto pronto</button>
+            <button class="chip active" data-cat="Condimento">Condimentos</button>
+            <button class="chip" data-cat="Matéria-prima">Matéria-prima</button>
+          </div>
+          <div class="scroll-list" id="estoque-list"></div>
+        </div>
+      </div>
+      <div class="col-right">
+        <div class="card">
+          <h2 class="card-title">Lista de compras</h2>
+          <div class="scroll-list" id="estoque-compras"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TELA: PRODUTOS (Criação + gerenciar Copos/Avulsos + Fotos) ===== -->
+  <section class="screen" id="screen-produtos">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="grid-2">
+      <div class="col-left">
+        <div class="card card-dark">
+          <h2 class="card-title">Criação de produto</h2>
+          <div class="chip-row" id="cri-modo-toggle">
+            <button class="chip active" data-modo="receita">Com receita</button>
+            <button class="chip" data-modo="revenda">Revenda (ex: Coca-Cola)</button>
+          </div>
+
+          <div id="cri-modo-receita">
+            <div class="field-stack">
+              <input type="text" id="cri-nome" placeholder="Nome do produto (ex: Açaí Especial)" class="pill-input">
+              <div class="field-row">
+                <input type="number" step="0.01" id="cri-preco" placeholder="Preço de venda (R$)" class="pill-input">
+                <select id="cri-tamanho" class="pill-input">
+                  <option value="300ml">300 ml</option>
+                  <option value="500ml">500 ml</option>
+                  <option value="700ml">700 ml</option>
+                  <option value="Outro">Outro / Un</option>
+                </select>
+              </div>
+            </div>
+            <div class="recipe-builder">
+              <div class="field-row">
+                <select id="cri-ingrediente" class="pill-input"></select>
+                <input type="number" step="0.01" id="cri-ing-qtd" placeholder="Qtd" class="pill-input tiny">
+                <button class="btn-round" id="cri-ing-add">+</button>
+              </div>
+              <div class="recipe-list" id="cri-recipe-list"></div>
+            </div>
+            <div class="cost-summary" id="cri-cost-summary">
+              <div><span>Custo</span><b id="cri-custo">R$ 0,00</b></div>
+              <div><span>Lucro</span><b id="cri-lucro">R$ 0,00</b></div>
+              <div><span>Margem</span><b id="cri-margem">0%</b></div>
+            </div>
+            <div class="btn-pair">
+              <button class="btn-gray" id="cri-del">Del</button>
+              <button class="btn-confirm-green" id="cri-add">Finalizar</button>
+            </div>
+          </div>
+
+          <div id="cri-modo-revenda" style="display:none;">
+            <div class="field-stack">
+              <select id="rev-estoque-item" class="pill-input"></select>
+              <input type="text" id="rev-descricao" placeholder="Descrição (aparece no cardápio do cliente)" class="pill-input">
+              <input type="number" step="0.01" id="rev-preco" placeholder="Preço de venda (R$)" class="pill-input">
+            </div>
+            <button class="btn-confirm-green" id="rev-add" style="width:100%;">Adicionar produto de revenda</button>
+            <p class="config-note" style="margin-top:8px;">Escolha um item já cadastrado no Estoque — cada venda desconta 1 unidade dele automaticamente.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Fotos dos produtos</h2>
+          <p class="config-note">Escolha um produto e envie a foto dele. Aparece no PDV e no cardápio do cliente (QR code).</p>
+          <div class="field-row">
+            <select id="cfg-foto-produto" class="pill-input"></select>
+          </div>
+          <div class="field-row">
+            <input type="file" id="cfg-foto-file" accept="image/*" style="display:none;">
+            <button class="btn-confirm" id="cfg-foto-upload" style="background:var(--purple-pill-2);">📷 Enviar foto</button>
+          </div>
+          <div class="scroll-list" id="cfg-foto-list"></div>
+        </div>
+      </div>
+      <div class="col-right">
+        <div class="card">
+          <h2 class="card-title">Gerenciar Copos Preparados</h2>
+          <p class="config-note">Produtos criados acima. Edite ou exclua os que não usar mais.</p>
+          <div class="scroll-list" id="cfg-copos-list"></div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Gerenciar Produtos Avulsos</h2>
+          <p class="config-note">Itens de revenda direta (bebidas, salgados etc). Edite nome, preço e a descrição que aparece no cardápio do cliente.</p>
+          <div class="scroll-list" id="cfg-avulsos-list"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TELA 2: VENDA (PDV) ===== -->
+  <section class="screen active" id="screen-venda">
+    <div class="grid-2 pdv-grid">
+
+      <div class="card">
+        <h2 class="card-title">Produto</h2>
+        <div class="chip-row" id="pdv-cat-toggle">
+          <button class="chip active" data-cat="preparado">Copo preparado</button>
+          <button class="chip" data-cat="criar">Criar copo</button>
+          <button class="chip" data-cat="produtos">Produtos</button>
+        </div>
+
+        <!-- Grade padrão (Copo preparado / Produtos) -->
+        <div id="pdv-standard-view">
+          <div class="admin-row" id="pdv-produtos-admin" style="display:none;">
+            <select id="pdv-avulso-estoque" class="pill-input small"></select>
+            <input type="number" step="0.01" id="pdv-avulso-preco" placeholder="Preço venda" class="pill-input small tiny">
+            <button class="btn-round" id="pdv-avulso-add">+</button>
+          </div>
+          <div class="pdv-product-grid" id="pdv-product-grid"></div>
+        </div>
+
+        <!-- Construtor de "Criar copo" -->
+        <div id="pdv-builder-view" style="display:none;">
+          <h3 class="card-subtitle">Tamanho</h3>
+          <div class="chip-row" id="pdv-size-toggle"></div>
+          <h3 class="card-subtitle">Adicionais</h3>
+          <div class="pdv-product-grid" id="pdv-adicionais-grid"></div>
+          <div class="builder-total">Subtotal do copo: <b id="pdv-builder-total">R$ 0,00</b></div>
+        </div>
+
+        <div class="cup-visual"><div class="cup"><div class="cup-liquid"></div></div></div>
+        <textarea id="pdv-obs" placeholder="Observações do item selecionado..." class="pill-input obs"></textarea>
+        <div class="btn-pair">
+          <button class="btn-gray" id="pdv-del">Del</button>
+          <button class="btn-confirm-green" id="pdv-add-item">Salvar observação</button>
+        </div>
+      </div>
+
+      <div class="card card-dark" style="padding-bottom:90px;">
+        <h2 class="card-title">Pedido</h2>
+        <div class="scroll-list order-list" id="pdv-order-list"></div>
+
+        <div class="discount-row">
+          <select id="pdv-desc-tipo" class="pill-input tiny">
+            <option value="R$">R$</option>
+            <option value="%">%</option>
+          </select>
+          <input type="number" step="0.01" id="pdv-desconto" placeholder="Desconto" class="pill-input">
+        </div>
+
+        <h3 class="card-subtitle">Entrega</h3>
+        <div class="chip-row" id="pdv-tipo-entrega">
+          <button class="chip active" data-tipo="retirada">🏠 Retirada</button>
+          <button class="chip" data-tipo="entrega">🛵 Entrega</button>
+        </div>
+        <div id="pdv-entrega-fields" style="display:none;">
+          <input type="text" id="pdv-entrega-nome" placeholder="Nome do cliente" class="pill-input">
+          <input type="text" id="pdv-entrega-telefone" placeholder="WhatsApp do cliente (com DDD)" class="pill-input">
+          <input type="text" id="pdv-entrega-endereco" placeholder="Endereço do cliente" class="pill-input">
+          <div id="pdv-entrega-mapa" style="height:180px; border-radius:16px; overflow:hidden; margin-bottom:10px;"></div>
+          <p class="config-note" id="pdv-entrega-status">Toque no mapa pra marcar onde fica o cliente.</p>
+        </div>
+
+        <h3 class="card-subtitle">Valor</h3>
+        <div class="chip-row" id="pdv-payment">
+          <button class="chip pay-chip active" data-pay="Dinheiro">Dinheiro</button>
+          <button class="chip pay-chip" data-pay="Pix">Pix</button>
+          <button class="chip pay-chip" data-pay="Cartão">Cartão</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Barra flutuante de finalizar -->
+    <button class="floating-finalize" id="pdv-finalizar">
+      <span>Finalizar venda</span>
+      <span class="total-pill" id="pdv-total">R$ 0,00</span>
+      <span class="check">✅</span>
+    </button>
+  </section>
+
+  <!-- ===== TELA 4: FINANCEIRO ===== -->
+  <section class="screen" id="screen-financeiro">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="period-cards-row" id="fin-period-cards">
+      <div class="period-card">
+        <span class="period-label">Hoje</span>
+        <b class="period-total" id="fin-hoje-total">R$ 0,00</b>
+        <span class="period-sub" id="fin-hoje-sub">Lucro R$ 0,00 · 0 vendas</span>
+      </div>
+      <div class="period-card">
+        <span class="period-label">Últimos 7 dias</span>
+        <b class="period-total" id="fin-7dias-total">R$ 0,00</b>
+        <span class="period-sub" id="fin-7dias-sub">Lucro R$ 0,00 · 0 vendas</span>
+      </div>
+      <div class="period-card">
+        <span class="period-label">Este mês</span>
+        <b class="period-total" id="fin-mes-total">R$ 0,00</b>
+        <span class="period-sub" id="fin-mes-sub">Lucro R$ 0,00 · 0 vendas</span>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="col-left">
+        <div class="card chart-card">
+          <h2 class="card-title">Vendas — últimos 7 dias</h2>
+          <div class="legend">
+            <span class="legend-dot blue"></span> Venda bruta
+            <span class="legend-dot purple"></span> Lucro líquido
+          </div>
+          <div class="week-bar-chart" id="fin-chart"></div>
+          <button class="btn-confirm" id="fin-export-pdf" style="margin-top:14px;">📄 Exportar relatório em PDF</button>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Pagamentos do mês</h2>
+          <div class="scroll-list" id="fin-pagamentos"></div>
+        </div>
+        <div class="card">
+          <h2 class="card-title">Vendas referente</h2>
+          <div class="chip-row" id="fin-size-toggle">
+            <button class="chip active" data-size="300ml">300ml</button>
+            <button class="chip" data-size="500ml">500ml</button>
+            <button class="chip" data-size="700ml">700ml</button>
+          </div>
+          <div class="size-summary" id="fin-size-summary"></div>
+        </div>
+      </div>
+      <div class="col-right">
+        <div class="card">
+          <h2 class="card-title">Meses</h2>
+          <div class="scroll-list" id="fin-months"></div>
+          <h2 class="card-title">Top Vendas (Faturamento)</h2>
+          <div class="scroll-list" id="fin-top"></div>
+          <h2 class="card-title">Top Lucro</h2>
+          <div class="scroll-list" id="fin-top-lucro"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TELA 5: HISTÓRICO DE VENDAS ===== -->
+  <section class="screen" id="screen-historico">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="card" id="hist-pendentes-card" style="display:none;">
+      <h2 class="card-title">🔔 Pedidos aguardando confirmação (QR code)</h2>
+      <div class="scroll-list" id="hist-pendentes-list"></div>
+    </div>
+    <div class="card">
+      <h2 class="card-title">Histórico de vendas</h2>
+      <div class="field-row">
+        <input type="date" id="hist-de" class="pill-input small">
+        <input type="date" id="hist-ate" class="pill-input small">
+        <select id="hist-pagamento" class="pill-input small">
+          <option value="">Todas formas</option>
+          <option value="Dinheiro">Dinheiro</option>
+          <option value="Pix">Pix</option>
+          <option value="Cartão">Cartão</option>
+        </select>
+        <button class="btn-round" id="hist-filtrar">🔍</button>
+      </div>
+      <div class="scroll-list" id="hist-list" style="max-height:520px;"></div>
+    </div>
+  </section>
+
+  <!-- ===== TELA: COMANDA (COZINHA) ===== -->
+  <section class="screen" id="screen-comanda">
+    <div class="card">
+      <h2 class="card-title">🍳 Comanda da Cozinha</h2>
+      <p class="config-note">Pedidos em preparo. Toque em "Pronto" quando finalizar cada um.</p>
+      <div class="scroll-list" id="comanda-list" style="max-height:70vh;"></div>
+    </div>
+  </section>
+
+  <!-- ===== TELA: PAINEL DE ENTREGA (MOTOBOY) ===== -->
+  <section class="screen" id="screen-entrega">
+    <div class="card">
+      <div class="section-header-row">
+        <div>
+          <h2 class="card-title">🛵 Minha Rota</h2>
+          <p class="config-note" id="entrega-nome-entregador" style="margin:0;"></p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-round" id="entrega-money-btn" style="background:var(--green); color:#0e3d16;">💰</button>
+          <button class="btn-round" id="entrega-add-btn">+</button>
+        </div>
+      </div>
+      <div class="add-form" id="entrega-add-form" style="display:none;">
+        <input type="text" id="entrega-numero-input" placeholder="Número do pedido (ex: 42)" inputmode="numeric" class="pill-input">
+        <button class="btn-confirm" id="entrega-add-confirm">Adicionar à rota</button>
+      </div>
+      <div class="add-form" id="entrega-money-panel" style="display:none;">
+        <h3 class="card-subtitle" style="margin-top:0;">Suas taxas de hoje</h3>
+        <div class="valor-estoque-badge" id="entrega-money-total" style="background:rgba(126,224,129,.15); color:var(--green); margin-bottom:10px; display:inline-block;">R$ 0,00 hoje</div>
+        <div class="scroll-list" id="entrega-money-list"></div>
+      </div>
+      <div class="scroll-list" id="entrega-rota-list" style="max-height:70vh; margin-top:14px;"></div>
+    </div>
+  </section>
+
+  <!-- ===== TELA: USUÁRIOS E ACESSO ===== -->
+  <section class="screen" id="screen-usuarios">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="card">
+      <h2 class="card-title">👥 Usuários e PINs</h2>
+      <div class="field-row">
+        <input type="text" id="cfg-user-nome" placeholder="Nome" class="pill-input">
+        <select id="cfg-user-role" class="pill-input">
+          <option value="atendente">Atendente</option>
+          <option value="entregador">Entregador</option>
+          <option value="dono">Dono</option>
+        </select>
+      </div>
+      <div class="field-row">
+        <input type="text" id="cfg-user-pin" placeholder="PIN (4 a 6 dígitos)" class="pill-input">
+        <button class="btn-round" id="cfg-user-add">+</button>
+      </div>
+      <div class="scroll-list" id="cfg-user-list"></div>
+      <p class="config-note" style="margin-top:14px;">💡 O PIN <b>000000</b> é reservado — abre direto a tela de Comanda da cozinha, sem acesso às outras áreas.</p>
+    </div>
+  </section>
+
+  <!-- ===== TELA: CONFIGURAÇÕES DA LOJA ===== -->
+  <section class="screen" id="screen-loja">
+    <div class="back-link" data-goto="gestao">← Voltar à Gestão</div>
+    <div class="card">
+      <h2 class="card-title">📍 Localização da loja</h2>
+      <p class="config-note">Marque onde fica seu estabelecimento — usado para calcular a distância e a taxa de entrega automaticamente.</p>
+      <button class="btn-confirm" id="loja-loc-gps" style="background:var(--purple-pill-2); margin-bottom:12px;">📍 Usar minha localização atual</button>
+      <div id="loja-mapa" style="height:220px; border-radius:16px; overflow:hidden;"></div>
+      <p class="config-note" id="loja-loc-status" style="margin-top:8px;">Nenhuma localização salva ainda.</p>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">🛵 Taxas de entrega por distância</h2>
+      <p class="config-note">Configure o valor cobrado conforme a distância até o cliente. Ex: até 5km = R$5, até 8km = R$10...</p>
+      <div class="field-row">
+        <input type="number" step="0.01" id="taxa-minima" placeholder="Taxa mínima (R$)" class="pill-input">
+        <button class="btn-round" id="taxa-minima-save">💾</button>
+      </div>
+      <p class="config-note" style="margin-top:-4px;">Nunca cobra menos que esse valor, mesmo pra entregas bem pertinho.</p>
+      <div class="field-row">
+        <input type="number" step="0.1" id="taxa-ate-km" placeholder="Até quantos km" class="pill-input">
+        <input type="number" step="0.01" id="taxa-preco" placeholder="Preço (R$)" class="pill-input">
+        <button class="btn-round" id="taxa-add">+</button>
+      </div>
+      <div class="scroll-list" id="taxas-list"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">💳 Chave Pix da loja</h2>
+      <p class="config-note">Aparece pro cliente quando ele escolher pagar via Pix no pedido pelo QR code.</p>
+      <div class="field-row">
+        <input type="text" id="cfg-pix-key" placeholder="Sua chave Pix (telefone, e-mail, CPF ou aleatória)" class="pill-input">
+        <button class="btn-round" id="cfg-pix-save">💾</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">📱 Cardápio digital (QR code)</h2>
+      <p class="config-note">Imprima o QR code ou compartilhe o link para os clientes pedirem pelo celular.</p>
+      <div class="qr-wrap">
+        <div id="cfg-qrcode"></div>
+      </div>
+      <div class="field-row">
+        <div class="pix-key" id="cfg-cliente-link" style="word-break:break-all; flex:1;">cliente.html</div>
+        <button class="btn-round" id="cfg-copy-link">📋</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">💾 Backup dos dados</h2>
+      <p class="config-note">Exporte todos os dados (estoque, produtos, vendas) em um arquivo JSON, ou restaure a partir de um backup anterior.</p>
+      <button class="btn-confirm" id="cfg-export">⬇️ Exportar backup (JSON)</button>
+      <input type="file" id="cfg-import-file" accept="application/json" style="display:none;">
+      <button class="btn-confirm" id="cfg-import" style="margin-top:10px; background:var(--purple-pill-2);">⬆️ Restaurar backup</button>
+    </div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
