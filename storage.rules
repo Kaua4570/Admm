@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    match /categories/{allPaths=**} {
+      allow read, delete: if isAdmin();
+      // Somente PNG, até 25 MB (o app limita a 20 MB).
+      allow create, update: if isAdmin()
+        && request.resource.contentType == 'image/png'
+        && request.resource.size < 25 * 1024 * 1024;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

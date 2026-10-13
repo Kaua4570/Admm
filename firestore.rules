@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Somente quem tem o custom claim "admin" = true (definido no servidor, nunca no navegador).
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    match /categories/{id} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120;
+    }
+
+    match /products/{id} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.categoryId is string;
+    }
+
+    match /artworks/{id} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.contentType == 'image/png'
+        && request.resource.data.productId is string
+        && request.resource.data.storagePath is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0;
+    }
+
+    match /meta/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // Todo o resto é bloqueado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

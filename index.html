@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Disk Dourado Artes</title>
+  <meta name="description" content="Biblioteca digital de artes PNG da Disk Dourado">
+  <meta name="theme-color" content="#0f0f0f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+  <div id="netBar" class="net-bar" hidden>Sem conexão — usando dados locais. Artes não baixadas podem não aparecer.</div>
+  <div id="updateBar" class="update-bar" hidden>
+    <span>Nova versão disponível.</span>
+    <button id="updateBtn" class="btn gold sm">Atualizar</button>
+  </div>
+
+  <!-- LOGIN -->
+  <section id="loginScreen" class="login" hidden>
+    <form id="loginForm" class="login-card" novalidate>
+      <img class="logo-img" src="logo.png" alt="Disk Dourado">
+      <h1 class="serif gold">Disk Dourado <em>Artes</em></h1>
+      <p class="muted">Acesso restrito ao proprietário</p>
+      <label class="field"><span>E-mail</span>
+        <input id="loginEmail" type="email" autocomplete="username" inputmode="email" required></label>
+      <label class="field"><span>Senha</span>
+        <input id="loginPass" type="password" autocomplete="current-password" required></label>
+      <p id="loginError" class="form-error" role="alert" hidden></p>
+      <button id="loginBtn" class="btn gold big" type="submit">Entrar</button>
+    </form>
+  </section>
+
+  <!-- APP -->
+  <div id="appShell" hidden>
+    <header class="app-header">
+      <div class="hdr-row">
+        <a class="brand" href="#/">
+          <img class="logo-img sm" src="logo.png" alt="">
+          <span class="serif">Disk Dourado <em>Artes</em></span>
+        </a>
+        <button id="logoutBtn" class="icon-btn" aria-label="Sair" title="Sair">⎋</button>
+      </div>
+      <div class="search">
+        <span aria-hidden="true">🔍</span>
+        <input id="q" type="search" placeholder="Buscar arte, produto ou categoria" autocomplete="off" enterkeyhint="search">
+        <button id="qClear" class="icon-btn sm" aria-label="Limpar busca" hidden>✕</button>
+      </div>
+    </header>
+
+    <main id="view" class="view" tabindex="-1"></main>
+
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <a href="#/" data-nav="home"><i>🏠</i><span>Início</span></a>
+      <a href="#/favs" data-nav="favs"><i>★</i><span>Favoritas</span></a>
+      <button id="navSearch" type="button"><i>🔍</i><span>Buscar</span></button>
+      <a href="#/backup" data-nav="backup"><i>💾</i><span>Backup</span></a>
+    </nav>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <noscript><p style="padding:24px;color:#fff">Ative o JavaScript para usar o Disk Dourado Artes.</p></noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
