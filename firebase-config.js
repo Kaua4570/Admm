@@ -29,4 +29,7 @@ export const db = initializeFirestore(app, {
 });
 
 export const storage = getStorage(app);
+// Se o Storage estiver inativo, falha em ~30 s em vez de tentar por 10 minutos.
+storage.maxUploadRetryTime = 30000;
+storage.maxOperationRetryTime = 30000;
 // Analytics não é necessário para a biblioteca e foi deixado de fora de propósito.

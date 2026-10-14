@@ -1,5 +1,5 @@
 // Disk Dourado Artes — aplicativo principal
-import { auth, db, storage } from "./firebase-config.js";
+import { auth, db, storage, firebaseConfig } from "./firebase-config.js";
 import {
   onAuthStateChanged, signInWithEmailAndPassword, signInAnonymously, signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
@@ -43,6 +43,8 @@ function friendly(e) {
     return "Sem permissão. Confirme que as regras foram publicadas e que o login Anônimo está ativado no Firebase Authentication (veja o README).";
   if (c === "unavailable" || c === "storage/retry-limit-exceeded" || c === "storage/network-request-failed" || !navigator.onLine)
     return "Sem conexão com a internet. Tente novamente quando estiver online.";
+  if (c === "app/upload-stalled" || c === "storage/bucket-not-found" || c === "storage/project-not-found")
+    return "O envio não começou. Quase sempre o Firebase Storage ainda não foi ativado (exige o plano Blaze: Storage → Primeiros passos) ou as regras do Storage não foram publicadas.";
   if (c === "storage/object-not-found") return "Arquivo não encontrado no Storage.";
   if (c === "storage/canceled") return "Envio cancelado.";
   if (c === "storage/quota-exceeded") return "Cota do Firebase Storage excedida.";
@@ -719,7 +721,17 @@ async function makeThumb(bmp, max = 480) {
 }
 const putFile = (path, blob, onProgress) => new Promise((resolve, reject) => {
   const task = uploadBytesResumable(ref(storage, path), blob, { contentType: "image/png", cacheControl: "private, max-age=31536000" });
-  task.on("state_changed", (s) => onProgress?.(s.bytesTransferred / s.totalBytes), reject, () => resolve());
+  let started = false;
+  // Se nenhum byte sair em 30 s, quase sempre o Storage não está ativo: avisa em vez de ficar em 0%.
+  const timer = setTimeout(() => {
+    if (started) return;
+    task.cancel();
+    reject(Object.assign(new Error("O envio não começou."), { code: "app/upload-stalled" }));
+  }, 30000);
+  task.on("state_changed",
+    (s) => { if (s.bytesTransferred > 0) { started = true; clearTimeout(timer); } onProgress?.(s.bytesTransferred / s.totalBytes); },
+    (e) => { clearTimeout(timer); reject(e); },
+    () => { clearTimeout(timer); resolve(); });
 });
 
 function pickAndUpload(productId) {
@@ -773,7 +785,7 @@ function startUploads(productId, files) {
       // Desfaz arquivos enviados para não deixar órfãos no Storage.
       await Promise.allSettled(job.paths.map((p) => deleteObject(ref(storage, p))));
       job.paths = [];
-      job.status = "error"; job.error = friendly(e);
+      job.status = "error"; job.error = friendly(e) + (e?.code ? ` [${e.code}]` : "");
     }
     draw();
     if (jobs.every((j) => j.status === "done")) toast(`${jobs.length} arte(s) enviada(s).`, "success");
@@ -1154,7 +1166,7 @@ onAuthStateChanged(auth, async (user) => {
         "auth/unauthorized-domain": `Este site (${location.hostname}) não está autorizado. No Firebase: Authentication → Configurações → Domínios autorizados → Adicionar domínio → ${location.hostname}`,
         "auth/operation-not-allowed": "O login Anônimo está desativado. Ative em Authentication → Sign-in method → Anônimo.",
         "auth/admin-restricted-operation": "O login Anônimo está desativado ou restrito. Ative em Authentication → Sign-in method → Anônimo.",
-        "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "Chave de API inválida. Confira o firebase-config.js.",
+        "auth/api-key-not-valid.-please-pass-a-valid-api-key.": `Chave de API inválida. Trecho da chave em uso neste site: ${firebaseConfig.apiKey.slice(8, 24)} (o correto é YBVwu1_YryRGcK06). Se estiver diferente, o arquivo antigo ainda está publicado ou em cache.`,
         ["auth/requests-from-referer-" + location.origin + "-are-blocked."]: "A chave de API do Google Cloud bloqueia este site. Libere o domínio em APIs e serviços → Credenciais → chave de navegador → Restrições de sites.",
       };
       const hint = hints[e.code] || "Não foi possível iniciar a sessão. Veja o código abaixo e o README.";
