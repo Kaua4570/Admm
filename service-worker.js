@@ -5,7 +5,7 @@
  *   se o usuário usar "Salvar offline" (IndexedDB, feito pelo app.js).
  * Atualização: aumente VERSION a cada publicação. O app mostra "Atualizar" quando há versão nova.
  */
-const VERSION = "v1.0.2";
+const VERSION = "v1.0.3";
 const SHELL_CACHE = `dda-shell-${VERSION}`;
 const CDN_CACHE = "dda-cdn-v1";
 

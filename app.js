@@ -1149,9 +1149,16 @@ onAuthStateChanged(auth, async (user) => {
     $("#view").innerHTML = `<div class="loader"><div class="spin"></div><span>Abrindo biblioteca…</span></div>`;
     try { await signInAnonymously(auth); }
     catch (e) {
-      const off = e.code === "auth/network-request-failed";
-      const hint = off ? "Sem conexão com a internet." : "No Firebase Authentication, ative o método de login “Anônimo” (veja o README).";
-      $("#view").innerHTML = `<div class="empty"><div class="empty-ico">🔒</div><h3>Não foi possível abrir</h3><p>${esc(hint)}</p><button class="btn gold" onclick="location.reload()">Tentar novamente</button></div>`;
+      const hints = {
+        "auth/network-request-failed": "Sem conexão com a internet.",
+        "auth/unauthorized-domain": `Este site (${location.hostname}) não está autorizado. No Firebase: Authentication → Configurações → Domínios autorizados → Adicionar domínio → ${location.hostname}`,
+        "auth/operation-not-allowed": "O login Anônimo está desativado. Ative em Authentication → Sign-in method → Anônimo.",
+        "auth/admin-restricted-operation": "O login Anônimo está desativado ou restrito. Ative em Authentication → Sign-in method → Anônimo.",
+        "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "Chave de API inválida. Confira o firebase-config.js.",
+        ["auth/requests-from-referer-" + location.origin + "-are-blocked."]: "A chave de API do Google Cloud bloqueia este site. Libere o domínio em APIs e serviços → Credenciais → chave de navegador → Restrições de sites.",
+      };
+      const hint = hints[e.code] || "Não foi possível iniciar a sessão. Veja o código abaixo e o README.";
+      $("#view").innerHTML = `<div class="empty"><div class="empty-ico">🔒</div><h3>Não foi possível abrir</h3><p>${esc(hint)}</p><p class="muted">Código: ${esc(e.code || e.message || "desconhecido")}</p><button class="btn gold" onclick="location.reload()">Tentar novamente</button></div>`;
     }
     return;
   }

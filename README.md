@@ -24,7 +24,7 @@ Projeto Firebase usado: **impressao-de-produto** (nenhum projeto novo é criado)
 ### 1. Ativar o login Anônimo (é o que dispensa a tela de login)
 1. Console Firebase → projeto **impressao-de-produto** → **Authentication** → **Primeiros passos**.
 2. Aba **Sign-in method** → habilite **Anônimo** e salve.
-3. Em **Configurações → Autorização de domínios**, confirme que `impressao-de-produto.web.app` está listado (vem por padrão).
+3. Em **Authentication → Configurações → Domínios autorizados**, adicione o domínio onde o app está publicado (ex.: `seuusuario.github.io`, só o domínio, sem `https://` nem caminho). Sem isso o app mostra “Não foi possível abrir”.
 
 O app abre direto na tela inicial: por baixo ele entra sozinho com uma sessão anônima, e as regras exigem essa sessão.
 
@@ -60,7 +60,7 @@ No Cloud Shell do projeto, envie o `cors.json` e rode:
 ```
 gcloud storage buckets update gs://impressao-de-produto.firebasestorage.app --cors-file=cors.json
 ```
-(alternativa: `gsutil cors set cors.json gs://impressao-de-produto.firebasestorage.app`). Se usar outro domínio, edite `origin` em `cors.json`.
+(alternativa: `gsutil cors set cors.json gs://impressao-de-produto.firebasestorage.app`). O `cors.json` já libera qualquer origem (`*`); como a leitura exige sessão do app, isso não abre a biblioteca.
 
 ### 7. Publicar o projeto
 ```

@@ -1,11 +1,6 @@
 [
   {
-    "origin": [
-      "https://impressao-de-produto.web.app",
-      "https://impressao-de-produto.firebaseapp.com",
-      "http://localhost:5000",
-      "http://localhost:8080"
-    ],
+    "origin": ["*"],
     "method": ["GET"],
     "maxAgeSeconds": 3600
   }
