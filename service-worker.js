@@ -5,7 +5,7 @@
  *   se o usuário usar "Salvar offline" (IndexedDB, feito pelo app.js).
  * Atualização: aumente VERSION a cada publicação. O app mostra "Atualizar" quando há versão nova.
  */
-const VERSION = "v1.0.4";
+const VERSION = "v1.0.5";
 const SHELL_CACHE = `dda-shell-${VERSION}`;
 const CDN_CACHE = "dda-cdn-v1";
 
@@ -70,19 +70,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Arquivos do próprio app: stale-while-revalidate.
+  // Arquivos do próprio app: rede primeiro (sempre a versão publicada); cache só se estiver offline.
   if (url.origin === self.location.origin) {
     event.respondWith(
       (async () => {
         const cache = await caches.open(SHELL_CACHE);
-        const cached = await cache.match(req);
-        const network = fetch(req)
-          .then((res) => {
-            if (res.ok) cache.put(req, res.clone());
-            return res;
-          })
-          .catch(() => null);
-        return cached || (await network) || (await cache.match("offline.html")) || Response.error();
+        try {
+          const res = await fetch(req, { cache: "no-cache" });
+          if (res.ok) cache.put(req, res.clone());
+          return res;
+        } catch {
+          return (await cache.match(req)) || (await cache.match("offline.html")) || Response.error();
+        }
       })()
     );
     return;
