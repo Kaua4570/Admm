@@ -2,9 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Somente quem tem o custom claim "admin" = true (definido no servidor, nunca no navegador).
+    // Exige sessão autenticada (o app entra sozinho com login anônimo).
     function isAdmin() {
-      return request.auth != null && request.auth.token.admin == true;
+      // Sessão do app (login anônimo do Firebase). Para voltar a exigir administrador,
+      // troque por: return request.auth != null && request.auth.token.admin == true;
+      return request.auth != null;
     }
 
     match /categories/{id} {

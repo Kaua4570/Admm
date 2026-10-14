@@ -12,7 +12,7 @@ Projeto Firebase usado: **impressao-de-produto** (nenhum projeto novo é criado)
 | `firebase-config.js` | Inicializa Auth, Firestore (com cache local) e Storage |
 | `manifest.webmanifest`, `service-worker.js`, `offline.html`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | PWA instalável e funcionamento offline da interface |
 | `logo.png`, `logo-original.jpg` | Logo da Disk Dourado (usada no login, no topo e nos ícones) |
-| `firestore.rules`, `storage.rules` | Regras de segurança (somente administradores) |
+| `firestore.rules`, `storage.rules` | Regras de segurança (exigem a sessão do app) |
 | `cors.json` | Libera o app a baixar os PNG do Storage (necessário para compartilhar/baixar/backup) |
 | `set-admin.js` | Concede o acesso de administrador (custom claim) a um usuário |
 | `firebase.json`, `.firebaserc` | Configuração de deploy |
@@ -21,24 +21,21 @@ Projeto Firebase usado: **impressao-de-produto** (nenhum projeto novo é criado)
 
 ## Passo a passo
 
-### 1. Configurar o Firebase Authentication
+### 1. Ativar o login Anônimo (é o que dispensa a tela de login)
 1. Console Firebase → projeto **impressao-de-produto** → **Authentication** → **Primeiros passos**.
-2. Aba **Sign-in method** → habilite **E-mail/senha** (somente a primeira opção).
-3. Aba **Users** → **Adicionar usuário** → informe o seu e-mail e uma senha forte. **Este é o único jeito de criar usuários** — o app não tem cadastro público.
-4. Em **Configurações → Autorização de domínios**, confirme que `impressao-de-produto.web.app` está listado (vem por padrão).
+2. Aba **Sign-in method** → habilite **Anônimo** e salve.
+3. Em **Configurações → Autorização de domínios**, confirme que `impressao-de-produto.web.app` está listado (vem por padrão).
 
-### 2. Tornar o seu usuário administrador (custom claim)
-As regras só aceitam quem tem `admin = true` no token. Isso é definido no servidor:
-1. Console Firebase → ⚙ **Configurações do projeto** → **Contas de serviço** → **Gerar nova chave privada**. Salve como `serviceAccountKey.json` na pasta do projeto. **Nunca compartilhe nem publique esse arquivo.**
-2. No computador com [Node.js](https://nodejs.org) instalado, dentro da pasta do projeto:
-   ```
-   npm install firebase-admin
-   node set-admin.js seu@email.com
-   ```
-3. Apague o `serviceAccountKey.json` depois de usar (ou guarde-o em local seguro).
-4. Saia do app e entre de novo (o claim só vale em tokens novos).
+O app abre direto na tela inicial: por baixo ele entra sozinho com uma sessão anônima, e as regras exigem essa sessão.
 
-> Sem Node? Abra o **Cloud Shell** (ícone `>_` no Google Cloud Console do mesmo projeto), envie `set-admin.js` e rode os mesmos comandos — lá não precisa de chave.
+> **Segurança — leia:** sem tela de login, qualquer pessoa que descubra o endereço do app consegue abrir a biblioteca e também alterar ou excluir artes (a configuração do Firebase é pública em apps web e o login anônimo está aberto a todos). Se o endereço for só seu e dos seus funcionários, o risco é pequeno; **não divulgue o link**. Para voltar a proteger, veja “Voltar a exigir login” abaixo.
+
+### 2. Voltar a exigir login (opcional)
+1. Em **Authentication → Users**, crie seu usuário (e-mail e senha).
+2. Gere a chave de conta de serviço (Configurações do projeto → Contas de serviço), salve como `serviceAccountKey.json` ao lado de `set-admin.js` e rode `npm install firebase-admin` e `node set-admin.js seu@email.com`. Depois apague a chave.
+3. Em `app.js`, troque `const REQUIRE_LOGIN = false;` por `true`.
+4. Nos dois arquivos `.rules`, troque `return request.auth != null;` por `return request.auth != null && request.auth.token.admin == true;` e publique as regras de novo.
+5. Aumente `VERSION` em `service-worker.js` e publique.
 
 ### 3. Habilitar o Cloud Firestore
 Console → **Firestore Database** → **Criar banco de dados** → modo **produção** → escolha a região (ex.: `southamerica-east1`, São Paulo). A região não pode ser alterada depois.
@@ -55,7 +52,7 @@ npm install -g firebase-tools
 firebase login
 firebase deploy --only firestore:rules,storage
 ```
-O que as regras garantem: nada é lido ou gravado sem login **e** sem `admin = true`; o Storage só aceita PNG até 25 MB; não existe `allow ... if true`.
+O que as regras garantem: nada é lido ou gravado sem uma sessão autenticada do Firebase; o Storage só aceita PNG até 25 MB; não existe `allow ... if true`. (Com o login anônimo, qualquer visitante do app tem sessão — veja o aviso de segurança na seção 1.)
 
 ### 6. Liberar o download dos PNG (CORS) — obrigatório uma vez
 Sem isso, **Compartilhar, Baixar, Salvar offline e Backup com imagens falham** (a exibição das imagens funciona, mas a leitura do arquivo para compartilhar exige CORS).
@@ -114,9 +111,9 @@ Marquei como **executado** apenas o que foi realmente rodado. O restante precisa
 |---|---|
 | Sintaxe do `app.js`/`service-worker.js`/`firebase-config.js` (`node --check`) | Executado |
 | `manifest.webmanifest`, `firebase.json`, `cors.json` são JSON válido | Executado |
-| Login/logout, cadastro/edição de categorias e produtos | A executar por você |
+| Abertura direta na tela inicial (sem login), cadastro/edição de categorias e produtos | A executar por você |
 | Upload de PNG, persistência após recarregar, exclusão de arquivos | A executar por você |
 | Pesquisa, favoritos, ordenação | A executar por você |
 | Download do PNG original e compartilhamento no Android | A executar por você (exige CORS aplicado) |
 | Interface offline / instalação do PWA | A executar por você |
-| Regras de acesso (usuário sem claim deve receber “sem permissão”) | A executar por você |
+| Regras de acesso (sem sessão do app, o Firebase deve negar) | A executar por você |

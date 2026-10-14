@@ -1,7 +1,7 @@
 // Disk Dourado Artes — aplicativo principal
 import { auth, db, storage } from "./firebase-config.js";
 import {
-  onAuthStateChanged, signInWithEmailAndPassword, signOut,
+  onAuthStateChanged, signInWithEmailAndPassword, signInAnonymously, signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, writeBatch,
@@ -10,6 +10,10 @@ import {
 import {
   ref, uploadBytesResumable, getDownloadURL, deleteObject, getBlob, getMetadata,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+
+// false = abre direto na tela inicial (acesso anônimo do Firebase, sem tela de login).
+// true  = exige e-mail/senha de administrador (veja README, seção "Voltar a exigir login").
+const REQUIRE_LOGIN = false;
 
 /* =========================================================
  * Utilidades
@@ -36,7 +40,7 @@ function toast(msg, type = "info", time = 4200) {
 function friendly(e) {
   const c = e?.code || "";
   if (c === "permission-denied" || c === "storage/unauthorized")
-    return "Sem permissão. Confirme que as regras de segurança foram publicadas e que esta conta é administradora (veja o README).";
+    return "Sem permissão. Confirme que as regras foram publicadas e que o login Anônimo está ativado no Firebase Authentication (veja o README).";
   if (c === "unavailable" || c === "storage/retry-limit-exceeded" || c === "storage/network-request-failed" || !navigator.onLine)
     return "Sem conexão com a internet. Tente novamente quando estiver online.";
   if (c === "storage/object-not-found") return "Arquivo não encontrado no Storage.";
@@ -1113,7 +1117,7 @@ function showLogin() {
   pendingLoginError = null;
   $("#loginBtn").disabled = false; $("#loginBtn").textContent = "Entrar";
 }
-function showApp() { $("#loginScreen").hidden = true; $("#appShell").hidden = false; }
+function showApp() { $("#loginScreen").hidden = true; $("#appShell").hidden = false; $("#logoutBtn").hidden = !REQUIRE_LOGIN; }
 
 const authMsg = (e) => ({
   "auth/invalid-credential": "E-mail ou senha incorretos.",
@@ -1139,8 +1143,19 @@ $("#logoutBtn").addEventListener("click", async () => {
 onAuthStateChanged(auth, async (user) => {
   stopListeners();
   state.user = null;
-  if (!user) { showLogin(); return; }
-  try {
+  if (!user) {
+    if (REQUIRE_LOGIN) { showLogin(); return; }
+    showApp();
+    $("#view").innerHTML = `<div class="loader"><div class="spin"></div><span>Abrindo biblioteca…</span></div>`;
+    try { await signInAnonymously(auth); }
+    catch (e) {
+      const off = e.code === "auth/network-request-failed";
+      const hint = off ? "Sem conexão com a internet." : "No Firebase Authentication, ative o método de login “Anônimo” (veja o README).";
+      $("#view").innerHTML = `<div class="empty"><div class="empty-ico">🔒</div><h3>Não foi possível abrir</h3><p>${esc(hint)}</p><button class="btn gold" onclick="location.reload()">Tentar novamente</button></div>`;
+    }
+    return;
+  }
+  if (REQUIRE_LOGIN) try {
     const tok = await user.getIdTokenResult();
     if (tok.claims.admin !== true) {
       pendingLoginError = "Esta conta não tem permissão de administrador. Veja no README como conceder o acesso (custom claim).";

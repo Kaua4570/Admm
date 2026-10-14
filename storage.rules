@@ -3,7 +3,9 @@ service firebase.storage {
   match /b/{bucket}/o {
 
     function isAdmin() {
-      return request.auth != null && request.auth.token.admin == true;
+      // Sessão do app (login anônimo do Firebase). Para voltar a exigir administrador,
+      // troque por: return request.auth != null && request.auth.token.admin == true;
+      return request.auth != null;
     }
 
     match /categories/{allPaths=**} {
