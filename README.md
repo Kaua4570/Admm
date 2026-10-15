@@ -57,7 +57,7 @@ Na primeira abertura, as 8 categorias sugeridas são criadas. Em **Início → G
 ### 7. Enviar PNG, compartilhar e imprimir
 - Abra o produto → **+ ADICIONAR ARTE PNG** (vários arquivos; o seletor mostra todas as fotos do celular). PNG de verdade é guardado **sem alteração**. JPG/WebP são convertidos para PNG no próprio aparelho (se passar de 10 MB, a resolução é reduzida em etapas até caber). O app valida o conteúdo, não a extensão.
 - Abra a arte → **Compartilhar PNG**: abre a folha de compartilhamento do Android; escolha Bluetooth ou o app da impressora. Se Bluetooth não aparecer ali, o app não consegue forçar: use **Baixar PNG original** e envie pela Galeria/Arquivos.
-- **Imprimir** abre o diálogo do Chrome; impressoras Bluetooth só aparecem com um serviço de impressão compatível no Android.
+- **Imprimir / Bluetooth** abre a tela de compartilhar do Android com o PNG; escolha Bluetooth ou o app da sua impressora. O envio por Bluetooth depende do aparelho e da impressora aceitarem imagem.
 
 ### 8. Backup e restauração
 Menu **Backup**: exporta `.zip` (dados + PNG originais) ou `.json` (só dados). Ao restaurar, itens que já existem são ignorados. **Artes só são restauradas a partir do .zip com imagens.**

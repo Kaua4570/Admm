@@ -439,7 +439,7 @@ function viewArt(id) {
   <div class="v-actions">
     <button class="btn gold big primary" data-act="share" data-id="${id}">📤 Compartilhar PNG</button>
     <button class="btn" data-act="download" data-id="${id}">⬇ Baixar PNG original</button>
-    <button class="btn" data-act="print" data-id="${id}">🖨 Imprimir</button>
+    <button class="btn" data-act="print" data-id="${id}">🖨 Imprimir / Bluetooth</button>
     <button class="btn" data-act="fav" data-id="${id}">${a.isFavorite ? "★ Favorita" : "☆ Favoritar"}</button>
     <button class="btn" data-act="rename" data-id="${id}">✎ Renomear</button>
     <button class="btn" data-act="cover" data-id="${id}">🖼 Usar como capa</button>
@@ -918,22 +918,8 @@ async function shareArt(a) {
   } finally { sharing = false; }
 }
 
-function printArt(a) {
-  const img = $("#artImg");
-  const src = img?.dataset.id === a.id && img.src;
-  if (!src || img.dataset.full !== "1") { toast("Aguarde o PNG original terminar de carregar para imprimir.", "error"); return; }
-  const f = document.createElement("iframe");
-  f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
-  f.srcdoc = `<!doctype html><html><head><title>${esc(a.name)}</title><style>@page{margin:6mm}html,body{margin:0}img{display:block;max-width:100%;max-height:96vh;margin:0 auto}</style></head><body><img src="${esc(src)}"></body></html>`;
-  f.onload = () => {
-    const w = f.contentWindow, im = w.document.querySelector("img");
-    const go = () => { try { w.focus(); w.print(); } catch { toast("Este navegador não abriu o diálogo de impressão.", "error"); } };
-    im.complete ? go() : (im.onload = go);
-    setTimeout(() => f.remove(), 120000);
-  };
-  document.body.append(f);
-  toast("Abrindo o diálogo de impressão do navegador. Impressoras Bluetooth só aparecem se o Android tiver um serviço de impressão compatível.", "info", 6500);
-}
+// "Imprimir" abre a tela de compartilhar do Android (Bluetooth, app da impressora etc.).
+function printArt(a) { return shareArt(a); }
 
 /* =========================================================
  * Backup e restauração
