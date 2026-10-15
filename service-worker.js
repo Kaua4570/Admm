@@ -1,11 +1,11 @@
 /* Disk Dourado Artes — Service Worker
  * - Pré-cache do "shell" do app (abre offline).
  * - Bibliotecas/fontes de CDN: cache sob demanda (cache-first).
- * - NÃO intercepta Firestore, Auth nem Storage: imagens do Storage só ficam offline
+ * - NÃO intercepta Firestore nem Auth: o PNG original só fica offline
  *   se o usuário usar "Salvar offline" (IndexedDB, feito pelo app.js).
  * Atualização: aumente VERSION a cada publicação. O app mostra "Atualizar" quando há versão nova.
  */
-const VERSION = "v1.0.6";
+const VERSION = "v1.1.1";
 const SHELL_CACHE = `dda-shell-${VERSION}`;
 const CDN_CACHE = "dda-cdn-v1";
 
@@ -104,5 +104,5 @@ self.addEventListener("fetch", (event) => {
       })()
     );
   }
-  // Qualquer outra origem (Firebase APIs, Storage): sem interceptação.
+  // Qualquer outra origem (Firebase APIs): sem interceptação.
 });

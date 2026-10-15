@@ -3,9 +3,9 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Exige sessão autenticada (o app entra sozinho com login anônimo).
+    // Para voltar a exigir administrador, troque por:
+    //   return request.auth != null && request.auth.token.admin == true;
     function isAdmin() {
-      // Sessão do app (login anônimo do Firebase). Para voltar a exigir administrador,
-      // troque por: return request.auth != null && request.auth.token.admin == true;
       return request.auth != null;
     }
 
@@ -31,9 +31,17 @@ service cloud.firestore {
       allow create, update: if isAdmin()
         && request.resource.data.contentType == 'image/png'
         && request.resource.data.productId is string
-        && request.resource.data.storagePath is string
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0;
+
+      // Partes do PNG original (base64), até ~760 mil caracteres cada.
+      match /chunks/{chunk} {
+        allow read, delete: if isAdmin();
+        allow create, update: if isAdmin()
+          && request.resource.data.data is string
+          && request.resource.data.data.size() <= 900000
+          && request.resource.data.i is int;
+      }
     }
 
     match /meta/{id} {

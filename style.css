@@ -104,7 +104,7 @@ em{font-style:normal;color:var(--gold)}
 .card:active{filter:brightness(1.15)}
 .thumb{position:relative;aspect-ratio:1/1;background:
   conic-gradient(#232323 25%,#1a1a1a 0 50%,#232323 0 75%,#1a1a1a 0) 0 0/20px 20px;display:grid;place-items:center;overflow:hidden}
-.thumb img{width:100%;height:100%;object-fit:contain;opacity:0;transition:opacity .25s}
+.thumb img{width:100%;height:100%;object-fit:contain}
 .thumb img.ready{opacity:1}
 .thumb .ph{font-size:54px}
 .card-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:4px;flex:1}

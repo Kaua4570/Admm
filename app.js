@@ -1,15 +1,12 @@
 // Disk Dourado Artes — aplicativo principal
-import { auth, db, storage, firebaseConfig } from "./firebase-config.js";
+import { auth, db, firebaseConfig } from "./firebase-config.js";
 import {
   onAuthStateChanged, signInWithEmailAndPassword, signInAnonymously, signOut,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
-  collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, writeBatch,
+  collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, orderBy, writeBatch,
   serverTimestamp, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import {
-  ref, uploadBytesResumable, getDownloadURL, deleteObject, getBlob, getMetadata,
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
 // false = abre direto na tela inicial (acesso anônimo do Firebase, sem tela de login).
 // true  = exige e-mail/senha de administrador (veja README, seção "Voltar a exigir login").
@@ -26,7 +23,11 @@ const fmtDate = (t) => (ms(t) ? new Date(ms(t)).toLocaleDateString("pt-BR", { da
 const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
 const norm = (s) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 const safeName = (s) => (String(s || "arte").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim().slice(0, 80) || "arte");
-const MAX_BYTES = 20 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024;
+// O PNG original é guardado no Firestore em partes (limite de 1 MiB por documento).
+// 570 000 bytes (múltiplo de 3) viram 760 000 caracteres base64 por parte.
+const CHUNK = 570000;
+const chunkId = (i) => String(i).padStart(4, "0");
 const PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10];
 
 function toast(msg, type = "info", time = 4200) {
@@ -39,15 +40,14 @@ function toast(msg, type = "info", time = 4200) {
 
 function friendly(e) {
   const c = e?.code || "";
-  if (c === "permission-denied" || c === "storage/unauthorized")
-    return "Sem permissão. Confirme que as regras foram publicadas e que o login Anônimo está ativado no Firebase Authentication (veja o README).";
-  if (c === "unavailable" || c === "storage/retry-limit-exceeded" || c === "storage/network-request-failed" || !navigator.onLine)
+  if (c === "permission-denied")
+    return "Sem permissão. Publique as regras do Firestore do README e confirme que o login Anônimo está ativado no Firebase Authentication.";
+  if (c === "unavailable" || !navigator.onLine)
     return "Sem conexão com a internet. Tente novamente quando estiver online.";
-  if (c === "app/upload-stalled" || c === "storage/bucket-not-found" || c === "storage/project-not-found")
-    return "O envio não começou. Quase sempre o Firebase Storage ainda não foi ativado (exige o plano Blaze: Storage → Primeiros passos) ou as regras do Storage não foram publicadas.";
-  if (c === "storage/object-not-found") return "Arquivo não encontrado no Storage.";
-  if (c === "storage/canceled") return "Envio cancelado.";
-  if (c === "storage/quota-exceeded") return "Cota do Firebase Storage excedida.";
+  if (c === "app/upload-stalled")
+    return "O envio demorou demais e foi interrompido. Verifique a internet e tente de novo. Se persistir, confira se as regras novas do Firestore foram publicadas.";
+  if (c === "resource-exhausted")
+    return "A cota gratuita diária do Firestore foi atingida. Tente de novo amanhã ou veja o uso no console do Firebase.";
   return e?.message || "Erro inesperado.";
 }
 
@@ -251,47 +251,43 @@ function stopListeners() {
 }
 
 /* =========================================================
- * Imagens do Storage
+ * Imagens — tudo no Firestore (sem Firebase Storage):
+ *  - miniatura leve (WebP/PNG em data URL) dentro do próprio documento da arte;
+ *  - PNG original dividido em partes na subcoleção artworks/{id}/chunks.
  * ======================================================= */
-const urlMem = new Map();
-let urlStore = {};
-try { urlStore = JSON.parse(localStorage.getItem("dda-urls-v1") || "{}"); } catch { urlStore = {}; }
-let urlSaveTimer;
-const persistUrls = () => {
-  clearTimeout(urlSaveTimer);
-  urlSaveTimer = setTimeout(() => { try { localStorage.setItem("dda-urls-v1", JSON.stringify(urlStore)); } catch { /* cheio */ } }, 500);
-};
-async function getUrl(path) {
-  if (urlMem.has(path)) return urlMem.get(path);
-  if (urlStore[path]) { urlMem.set(path, urlStore[path]); return urlStore[path]; }
-  const u = await getDownloadURL(ref(storage, path));
-  urlMem.set(path, u); urlStore[path] = u; persistUrls();
-  return u;
+const hydrate = () => {};
+const blobToB64 = (blob) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result).split(",")[1] || "");
+  r.onerror = () => rej(r.error || new Error("Falha ao ler o arquivo."));
+  r.readAsDataURL(blob);
+});
+function b64ToBytes(str) {
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
-function forgetUrl(path) { urlMem.delete(path); delete urlStore[path]; persistUrls(); }
+const withTimeout = (p, t = 40000) => Promise.race([
+  p,
+  new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error("O envio demorou demais."), { code: "app/upload-stalled" })), t)),
+]);
 
-const io = "IntersectionObserver" in window
-  ? new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); loadImg(e.target); } }), { rootMargin: "400px" })
-  : null;
-async function loadImg(img, retry = false) {
-  const path = img.dataset.path;
-  try {
-    img.onload = () => img.classList.add("ready");
-    img.onerror = () => { if (!retry && path) { forgetUrl(path); loadImg(img, true); } };
-    img.src = await getUrl(path);
-  } catch { /* offline ou arquivo ausente: mantém o fundo */ }
-}
-function hydrate(root) {
-  $$("img[data-path]", root).forEach((i) => (io ? io.observe(i) : loadImg(i)));
+async function fetchOriginal(a) {
+  const n = a.chunkCount || 0;
+  if (!n) throw new Error("Esta arte não tem arquivo original salvo.");
+  const snap = await getDocs(query(collection(db, "artworks", a.id, "chunks"), orderBy("i")));
+  if (snap.size !== n) throw new Error(`A arte está incompleta no banco (${snap.size} de ${n} partes). Exclua e envie de novo.`);
+  return new Blob(snap.docs.map((d) => b64ToBytes(d.data().data)), { type: "image/png" });
 }
 
-/* Arquivo PNG original (para compartilhar, baixar, backup) */
+/* Arquivo PNG original (para exibir, compartilhar, baixar, backup) */
 const fileCache = new Map();
 async function getFile(a) {
   if (fileCache.has(a.id)) return fileCache.get(a.id);
   let blob = null;
   try { blob = (await idb.get(a.id))?.blob || null; } catch { /* sem IDB */ }
-  if (!blob) blob = await getBlob(ref(storage, a.storagePath));
+  if (!blob) blob = await fetchOriginal(a);
   const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
   if (!PNG_SIG.every((b, i) => head[i] === b)) throw new Error("O arquivo recebido não é um PNG válido.");
   const file = new File([blob], safeName(a.name) + ".png", { type: "image/png" });
@@ -321,15 +317,16 @@ function chips(activeId = null) {
 const secTitle = (t, extra = "") => `<h2 class="sec-title">${esc(t)} <i class="rule"></i>${extra}</h2>`;
 
 const artCard = (a) => `<article class="card" data-act="open-art" data-id="${a.id}">
-  <div class="thumb"><img data-path="${esc(a.thumbPath || a.storagePath)}" alt="${esc(a.name)}" decoding="async">
+  <div class="thumb">${a.thumb ? `<img src="${esc(a.thumb)}" alt="${esc(a.name)}" decoding="async">` : `<div class="ph">🖼️</div>`}
   <button class="fav ${a.isFavorite ? "on" : ""}" data-act="fav" data-id="${a.id}" aria-label="${a.isFavorite ? "Desfavoritar" : "Favoritar"}">${a.isFavorite ? "★" : "☆"}</button></div>
   <div class="card-body"><h3>${esc(a.name)}</h3><p>${fmtDate(a.createdAt)}</p></div></article>`;
 
 const prodCard = (p) => {
   const n = artsOf(p.id).length;
   const c = idx.cats.get(p.categoryId);
+  const cover = idx.arts.get(p.coverArtId) || artsOf(p.id)[0];
   return `<article class="card" data-act="open-prod" data-id="${p.id}">
-  <div class="thumb">${p.coverStoragePath ? `<img data-path="${esc(p.coverStoragePath)}" alt="" decoding="async">` : `<div class="ph">${esc(c?.icon || "📦")}</div>`}</div>
+  <div class="thumb">${cover?.thumb ? `<img src="${esc(cover.thumb)}" alt="" decoding="async">` : `<div class="ph">${esc(c?.icon || "📦")}</div>`}</div>
   <div class="card-body"><h3>${esc(p.name)}</h3><p>${esc(p.description || c?.name || "")}</p>
   <div class="price">${n} ${n === 1 ? "arte" : "artes"}</div>
   <button class="plus" data-act="add-art" data-id="${p.id}" aria-label="Adicionar arte PNG a ${esc(p.name)}">+</button></div></article>`;
@@ -463,7 +460,7 @@ function viewBackup() {
     <button class="btn big" data-act="restore">⬆ Escolher arquivo de backup</button></div>
   <div class="panel"><h3>Entenda as diferenças</h3>
     <ul>
-      <li><b>Armazenamento permanente (Firebase):</b> é onde as artes vivem de verdade (Firestore + Storage). Já é a sua cópia principal na nuvem.</li>
+      <li><b>Armazenamento permanente (Firebase):</b> é onde as artes vivem de verdade (Firestore). Já é a sua cópia principal na nuvem.</li>
       <li><b>Backup dos arquivos (.zip com imagens):</b> cópia completa fora do Firebase, útil contra exclusão acidental ou troca de projeto.</li>
       <li><b>Backup local só de metadados (.json):</b> guarda nomes e organização, mas <u>não</u> as imagens; só serve de índice.</li>
     </ul>
@@ -524,25 +521,24 @@ function objUrl(id, blob) {
 async function loadViewerImage(a) {
   const img = $("#artImg"), msg = $("#stageMsg");
   if (!img || !a) return;
-  let src = null;
+  const still = () => $("#artImg")?.dataset.id === a.id;
+  img.dataset.full = "0";
+  // 1) miniatura na hora, enquanto o original é montado
+  if (a.thumb) { img.src = a.thumb; img.hidden = false; msg.hidden = true; }
+  // 2) PNG original
   try {
+    let src = null;
     if (offlineIds.has(a.id)) { const r = await idb.get(a.id); if (r?.blob) src = objUrl(a.id, r.blob); }
-    if (!src) src = await getUrl(a.storagePath);
+    if (!src) src = objUrl(a.id, await getFile(a));
+    if (!still()) return;
+    img.onload = () => { img.dataset.full = "1"; img.hidden = false; msg.hidden = true; };
+    img.onerror = () => { msg.hidden = false; msg.innerHTML = `<div>Imagem indisponível.</div>`; };
+    img.src = src;
   } catch (e) {
-    if ($("#artImg")?.dataset.id === a.id) msg.innerHTML = `<div>Não foi possível carregar a imagem.<br><small class="muted">${esc(friendly(e))}</small></div>`;
-    return;
+    if (!still()) return;
+    if (a.thumb) toast(`Mostrando só a prévia: ${friendly(e)}`, "error", 6000);
+    else { msg.hidden = false; msg.innerHTML = `<div>Não foi possível carregar a imagem.<br><small class="muted">${esc(friendly(e))}</small></div>`; }
   }
-  if ($("#artImg")?.dataset.id !== a.id) return;
-  img.onload = () => {
-    img.hidden = false; msg.hidden = true;
-    if (!navigator.connection?.saveData) setTimeout(() => { if (location.hash === `#/art/${a.id}`) getFile(a).catch(() => {}); }, 800);
-  };
-  img.onerror = () => {
-    forgetUrl(a.storagePath);
-    msg.hidden = false;
-    msg.innerHTML = `<div>Imagem indisponível${navigator.onLine ? "." : " offline.<br><small class='muted'>Use “Salvar offline” quando estiver conectado.</small>"}</div>`;
-  };
-  img.src = src;
 }
 function stepArt(dir) {
   const a = idx.arts.get(decodeURIComponent((location.hash.split("/")[2]) || ""));
@@ -649,7 +645,7 @@ function productForm(p, presetCat) {
     onSubmit: async (v) => {
       const data = { name: v.name, description: v.description, categoryId: v.categoryId, updatedAt: serverTimestamp() };
       if (!p) {
-        await setDoc(doc(collection(db, "products")), { ...data, coverStoragePath: null, createdAt: serverTimestamp() });
+        await setDoc(doc(collection(db, "products")), { ...data, coverArtId: null, createdAt: serverTimestamp() });
         toast("Produto criado.", "success");
         return;
       }
@@ -662,15 +658,13 @@ function productForm(p, presetCat) {
   });
 }
 
-async function removeFiles(a) {
-  for (const path of [a.storagePath, a.thumbPath].filter(Boolean)) {
-    try { await deleteObject(ref(storage, path)); }
-    catch (e) { if (e.code !== "storage/object-not-found") throw e; }
-  }
+// Agrupa num lote a exclusão da arte e de todas as partes do PNG (tudo ou nada).
+function artDeleteOps(b, a) {
+  for (let i = 0; i < (a.chunkCount || 0); i++) b.delete(doc(db, "artworks", a.id, "chunks", chunkId(i)));
+  b.delete(doc(db, "artworks", a.id));
 }
 function forgetArt(a) {
   fileCache.delete(a.id); offlineIds.delete(a.id); idb.del(a.id).catch(() => {});
-  [a.storagePath, a.thumbPath].filter(Boolean).forEach(forgetUrl);
   if (objUrls.has(a.id)) { URL.revokeObjectURL(objUrls.get(a.id)); objUrls.delete(a.id); }
 }
 
@@ -678,7 +672,7 @@ async function deleteProduct(p) {
   const arts = artsOf(p.id);
   const ok = await confirmDialog({
     title: "Excluir produto",
-    message: `Excluir <b>${esc(p.name)}</b> e ${arts.length ? `suas <b>${arts.length}</b> arte(s), incluindo os arquivos no Storage` : "todo o seu conteúdo"}? Esta ação não pode ser desfeita.`,
+    message: `Excluir <b>${esc(p.name)}</b> e ${arts.length ? `suas <b>${arts.length}</b> arte(s), incluindo os arquivos PNG` : "todo o seu conteúdo"}? Esta ação não pode ser desfeita.`,
     confirmLabel: "Excluir tudo", danger: true,
   });
   if (!ok) return;
@@ -686,8 +680,9 @@ async function deleteProduct(p) {
   try {
     for (let i = 0; i < arts.length; i++) {
       pm.set(`Removendo arte ${i + 1} de ${arts.length}…`, i / Math.max(1, arts.length));
-      await removeFiles(arts[i]);          // 1º o arquivo…
-      await deleteDoc(doc(db, "artworks", arts[i].id)); // …depois o registro
+      const lote = writeBatch(db);
+      artDeleteOps(lote, arts[i]);          // arte + partes do PNG, de uma vez
+      await lote.commit();
       forgetArt(arts[i]);
     }
     await deleteDoc(doc(db, "products", p.id));
@@ -712,27 +707,33 @@ async function validatePng(file) {
   try { bmp = await createImageBitmap(file); } catch { throw new Error("O PNG está corrompido ou não pôde ser lido."); }
   return bmp;
 }
-async function makeThumb(bmp, max = 480) {
-  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
-  const cv = document.createElement("canvas");
-  cv.width = Math.max(1, Math.round(bmp.width * s)); cv.height = Math.max(1, Math.round(bmp.height * s));
-  cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
-  return new Promise((r) => cv.toBlob(r, "image/png"));
+// Miniatura leve (vai dentro do documento da arte). WebP mantém a transparência; cai para PNG se preciso.
+async function makeThumbUrl(bmp) {
+  let url = "";
+  for (const max of [360, 260, 180]) {
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    url = cv.toDataURL("image/webp", 0.8);
+    if (!url.startsWith("data:image/webp")) url = cv.toDataURL("image/png");
+    if (url.length <= 150000) return url;
+  }
+  return url;
 }
-const putFile = (path, blob, onProgress) => new Promise((resolve, reject) => {
-  const task = uploadBytesResumable(ref(storage, path), blob, { contentType: "image/png", cacheControl: "private, max-age=31536000" });
-  let started = false;
-  // Se nenhum byte sair em 30 s, quase sempre o Storage não está ativo: avisa em vez de ficar em 0%.
-  const timer = setTimeout(() => {
-    if (started) return;
-    task.cancel();
-    reject(Object.assign(new Error("O envio não começou."), { code: "app/upload-stalled" }));
-  }, 30000);
-  task.on("state_changed",
-    (s) => { if (s.bytesTransferred > 0) { started = true; clearTimeout(timer); } onProgress?.(s.bytesTransferred / s.totalBytes); },
-    (e) => { clearTimeout(timer); reject(e); },
-    () => { clearTimeout(timer); resolve(); });
-});
+// Grava o PNG original em partes; `written` guarda as já gravadas para desfazer em caso de erro.
+async function writeChunks(artId, file, onProgress, written) {
+  const n = Math.ceil(file.size / CHUNK);
+  for (let i = 0; i < n; i++) {
+    const data = await blobToB64(file.slice(i * CHUNK, (i + 1) * CHUNK));
+    await withTimeout(setDoc(doc(db, "artworks", artId, "chunks", chunkId(i)), { i, data }));
+    written.push(i);
+    onProgress?.((i + 1) / n);
+  }
+  return n;
+}
+const undoChunks = (artId, written) =>
+  Promise.allSettled(written.map((i) => deleteDoc(doc(db, "artworks", artId, "chunks", chunkId(i)))));
 
 function pickAndUpload(productId) {
   if (!idx.prods.get(productId)) return;
@@ -744,7 +745,7 @@ function pickAndUpload(productId) {
 
 function startUploads(productId, files) {
   const jobs = files.map((file) => ({
-    file, productId, id: doc(collection(db, "artworks")).id, status: "queued", pct: 0, error: null, paths: [],
+    file, productId, id: doc(collection(db, "artworks")).id, status: "queued", pct: 0, error: null, written: [],
   }));
   const m = modal("Enviando artes", `<div id="jobs"></div><div class="modal-actions"><button class="btn gold" data-close>Fechar</button></div>
     <p class="muted" style="margin-top:10px">Pode fechar esta janela: os envios continuam.</p>`);
@@ -758,33 +759,28 @@ function startUploads(productId, files) {
   m.el.addEventListener("click", (e) => { const r = e.target.closest("[data-retry]"); if (r) runJob(jobs[+r.dataset.retry]); });
 
   async function runJob(job) {
-    job.status = "uploading"; job.error = null; job.pct = 0; draw();
+    job.status = "uploading"; job.error = null; job.pct = 0; job.written = []; draw();
     try {
       const prod = idx.prods.get(job.productId);
       if (!prod) throw new Error("O produto não existe mais.");
       const bmp = await validatePng(job.file);
       const width = bmp.width, height = bmp.height;
-      const thumb = await makeThumb(bmp).catch(() => null);
+      const thumb = await makeThumbUrl(bmp);
       bmp.close?.();
-      const base = `categories/${prod.categoryId}/products/${prod.id}/artworks/${job.id}`;
-      job.paths = [`${base}.png`];
-      await putFile(job.paths[0], job.file, (p) => { job.pct = p * 0.92; draw(); });
-      let thumbPath = null;
-      if (thumb) { thumbPath = `${base}_thumb.png`; job.paths.push(thumbPath); await putFile(thumbPath, thumb); }
+      const n = await writeChunks(job.id, job.file, (p) => { job.pct = p * 0.95; draw(); }, job.written);
       job.pct = 0.97; draw();
       const b = writeBatch(db);
       b.set(doc(db, "artworks", job.id), {
         name: safeName(job.file.name.replace(/\.png$/i, "")), productId: prod.id, categoryId: prod.categoryId,
-        storagePath: job.paths[0], thumbPath, contentType: "image/png", sizeBytes: job.file.size, width, height,
+        thumb, chunkCount: n, contentType: "image/png", sizeBytes: job.file.size, width, height,
         isFavorite: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
-      if (!idx.prods.get(prod.id)?.coverStoragePath) b.update(doc(db, "products", prod.id), { coverStoragePath: thumbPath || job.paths[0], updatedAt: serverTimestamp() });
-      await b.commit();
+      if (!idx.prods.get(prod.id)?.coverArtId) b.update(doc(db, "products", prod.id), { coverArtId: job.id, updatedAt: serverTimestamp() });
+      await withTimeout(b.commit());
       job.status = "done"; job.pct = 1;
     } catch (e) {
-      // Desfaz arquivos enviados para não deixar órfãos no Storage.
-      await Promise.allSettled(job.paths.map((p) => deleteObject(ref(storage, p))));
-      job.paths = [];
+      await undoChunks(job.id, job.written); // não deixa partes soltas no banco
+      job.written = [];
       job.status = "error"; job.error = friendly(e) + (e?.code ? ` [${e.code}]` : "");
     }
     draw();
@@ -813,16 +809,15 @@ function renameArt(a) {
   });
 }
 async function deleteArt(a) {
-  if (!(await confirmDialog({ title: "Excluir arte", message: `Excluir <b>${esc(a.name)}</b>? O arquivo PNG será removido do Storage.`, confirmLabel: "Excluir", danger: true }))) return;
+  if (!(await confirmDialog({ title: "Excluir arte", message: `Excluir <b>${esc(a.name)}</b>? O arquivo PNG será removido.`, confirmLabel: "Excluir", danger: true }))) return;
   const list = sorted(artsOf(a.productId), state.sort.art);
   const i = list.findIndex((x) => x.id === a.id);
   const goto = list[i + 1] || list[i - 1];
   try {
-    await removeFiles(a);
     const b = writeBatch(db);
-    b.delete(doc(db, "artworks", a.id));
+    artDeleteOps(b, a);
     const p = idx.prods.get(a.productId);
-    if (p && [a.storagePath, a.thumbPath].includes(p.coverStoragePath)) b.update(doc(db, "products", p.id), { coverStoragePath: null, updatedAt: serverTimestamp() });
+    if (p && p.coverArtId === a.id) b.update(doc(db, "products", p.id), { coverArtId: null, updatedAt: serverTimestamp() });
     await b.commit();
     forgetArt(a);
     toast("Arte excluída.", "success");
@@ -831,7 +826,7 @@ async function deleteArt(a) {
 }
 async function setCover(a) {
   try {
-    await updateDoc(doc(db, "products", a.productId), { coverStoragePath: a.thumbPath || a.storagePath, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db, "products", a.productId), { coverArtId: a.id, updatedAt: serverTimestamp() });
     toast("Capa do produto atualizada.", "success");
   } catch (e) { toast(friendly(e), "error"); }
 }
@@ -861,7 +856,7 @@ async function downloadArt(a) {
     const file = await getFile(a);
     triggerDownload(file);
     toast("Download solicitado ao navegador. Procure o arquivo em Downloads.", "success");
-  } catch (e) { toast(`Falha no download: ${friendly(e)}${e.code ? "" : ""} Se persistir, veja a configuração de CORS no README.`, "error", 7000); }
+  } catch (e) { toast(`Falha no download: ${friendly(e)}${e.code ? "" : ""} Tente de novo com internet estável.`, "error", 7000); }
 }
 
 function shareFallback(a, reason) {
@@ -881,7 +876,7 @@ async function shareArt(a) {
   try {
     let file;
     try { file = await getFile(a); }
-    catch (e) { toast(`Não foi possível obter o PNG: ${friendly(e)} (verifique a conexão e o CORS do Storage — README).`, "error", 7000); return; }
+    catch (e) { toast(`Não foi possível obter o PNG: ${friendly(e)} Verifique a conexão.`, "error", 7000); return; }
     const data = { files: [file], title: a.name };
     if (!navigator.share || !navigator.canShare || !navigator.canShare(data)) {
       shareFallback(a, "Este navegador/aparelho não permite compartilhar arquivos diretamente."); return;
@@ -900,7 +895,7 @@ async function shareArt(a) {
 function printArt(a) {
   const img = $("#artImg");
   const src = img?.dataset.id === a.id && img.src;
-  if (!src) { toast("Aguarde a imagem carregar para imprimir.", "error"); return; }
+  if (!src || img.dataset.full !== "1") { toast("Aguarde o PNG original terminar de carregar para imprimir.", "error"); return; }
   const f = document.createElement("iframe");
   f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
   f.srcdoc = `<!doctype html><html><head><title>${esc(a.name)}</title><style>@page{margin:6mm}html,body{margin:0}img{display:block;max-width:100%;max-height:96vh;margin:0 auto}</style></head><body><img src="${esc(src)}"></body></html>`;
@@ -953,7 +948,6 @@ async function exportBackup() {
 }
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const PATH_RE = /^categories\/[A-Za-z0-9_-]+\/products\/[A-Za-z0-9_-]+\/artworks\/[A-Za-z0-9_-]+\.png$/;
 function validateBackup(d) {
   const bad = (m) => { throw new Error("Backup inválido: " + m); };
   if (!d || d.app !== "disk-dourado-artes") bad("não é um backup do Disk Dourado Artes.");
@@ -963,8 +957,7 @@ function validateBackup(d) {
   d.categories.forEach((c) => { if (!ID_RE.test(c.id) || typeof c.name !== "string" || !c.name || c.name.length > 120) bad("categoria com dados incorretos."); cs.add(c.id); });
   d.products.forEach((p) => { if (!ID_RE.test(p.id) || typeof p.name !== "string" || !p.name || !(cs.has(p.categoryId) || idx.cats.has(p.categoryId))) bad(`produto “${p.name || "?"}” sem categoria válida.`); ps.add(p.id); });
   d.artworks.forEach((a) => {
-    if (!ID_RE.test(a.id) || typeof a.name !== "string" || !PATH_RE.test(a.storagePath || "") || !(ps.has(a.productId) || idx.prods.has(a.productId))) bad(`arte “${a.name || "?"}” com dados incorretos.`);
-    if (a.thumbPath && !PATH_RE.test(a.thumbPath.replace(/_thumb\.png$/, ".png"))) bad("caminho de miniatura inválido.");
+    if (!ID_RE.test(a.id) || typeof a.name !== "string" || !(ps.has(a.productId) || idx.prods.has(a.productId))) bad(`arte “${a.name || "?"}” com dados incorretos.`);
   });
 }
 
@@ -1008,7 +1001,7 @@ async function restoreBackup(file) {
     <li>Produtos novos: <b>${newProds.length}</b> (existentes: ${data.products.length - newProds.length})</li>
     <li>Artes novas: <b>${newArts.length}</b> (já existentes, ignoradas: ${data.artworks.length - newArts.length})</li>
     <li>Imagens no arquivo: <b>${newArts.filter(inZip).length}</b></li></ul>
-    <p class="muted">Artes sem imagem no backup só serão restauradas se o arquivo ainda existir no Storage.</p>`;
+    <p class="muted">Artes sem imagem no arquivo não podem ser restauradas: o PNG original só existe dentro do .zip com imagens.</p>`;
   if (!newCats.length && !newProds.length && !newArts.length) { toast("Nada a restaurar: tudo deste backup já existe na biblioteca."); return; }
   if (!(await confirmDialog({ title: "Restaurar backup", message: summary, confirmLabel: "Restaurar" }))) return;
 
@@ -1018,45 +1011,40 @@ async function restoreBackup(file) {
   try {
     const b = writeBatch(db);
     newCats.forEach((c) => b.set(doc(db, "categories", c.id), { name: c.name, description: c.description || "", icon: c.icon || "📦", sortOrder: c.sortOrder ?? 999, createdAt: fromMs(c.createdAt), updatedAt: serverTimestamp() }));
-    newProds.forEach((p) => b.set(doc(db, "products", p.id), { name: p.name, description: p.description || "", categoryId: mapCat(p.categoryId), coverStoragePath: null, createdAt: fromMs(p.createdAt), updatedAt: serverTimestamp() }));
+    newProds.forEach((p) => b.set(doc(db, "products", p.id), { name: p.name, description: p.description || "", categoryId: mapCat(p.categoryId), coverArtId: null, createdAt: fromMs(p.createdAt), updatedAt: serverTimestamp() }));
     await b.commit();
 
-    const restoredPaths = new Map(); // productId -> caminhos restaurados
+    const restored = new Map(); // productId -> ids das artes restauradas
     for (let i = 0; i < newArts.length; i++) {
       const a = newArts[i];
-      pm.set(`Restaurando arte ${i + 1} de ${newArts.length}…`, i / newArts.length);
+      const label = `Restaurando arte ${i + 1} de ${newArts.length}…`;
+      pm.set(label, i / newArts.length);
+      const written = [];
       try {
-        let thumbPath = null, width = a.width || 0, height = a.height || 0, size = a.sizeBytes || 0;
         const entry = zip?.file(`images/${a.id}.png`);
-        if (entry) {
-          const blob = new Blob([await entry.async("arraybuffer")], { type: "image/png" });
-          const f = new File([blob], "x.png", { type: "image/png" });
-          const bmp = await validatePng(f);
-          width = bmp.width; height = bmp.height; size = f.size;
-          const th = await makeThumb(bmp).catch(() => null);
-          bmp.close?.();
-          await putFile(a.storagePath, f);
-          if (th) { thumbPath = a.storagePath.replace(/\.png$/, "_thumb.png"); await putFile(thumbPath, th); }
-        } else {
-          try { await getMetadata(ref(storage, a.storagePath)); } catch { report.skipped.push(`${a.name} (sem imagem)`); continue; }
-          thumbPath = a.thumbPath || null;
-          if (thumbPath) { try { await getMetadata(ref(storage, thumbPath)); } catch { thumbPath = null; } }
-        }
+        if (!entry) { report.skipped.push(`${a.name} (sem imagem no backup)`); continue; }
+        const f = new File([new Blob([await entry.async("arraybuffer")], { type: "image/png" })], "x.png", { type: "image/png" });
+        const bmp = await validatePng(f);
+        const width = bmp.width, height = bmp.height;
+        const thumb = await makeThumbUrl(bmp);
+        bmp.close?.();
+        const n = await writeChunks(a.id, f, (p) => pm.set(label, (i + p) / newArts.length), written);
         const pid = prodMap.get(a.productId) || a.productId;
-        await setDoc(doc(db, "artworks", a.id), {
-          name: safeName(a.name), productId: pid, categoryId: mapCat(a.categoryId), storagePath: a.storagePath, thumbPath,
-          contentType: "image/png", sizeBytes: size, width, height, isFavorite: !!a.isFavorite, createdAt: fromMs(a.createdAt), updatedAt: serverTimestamp(),
-        });
-        if (!restoredPaths.has(pid)) restoredPaths.set(pid, []);
-        restoredPaths.get(pid).push(thumbPath || a.storagePath);
+        await withTimeout(setDoc(doc(db, "artworks", a.id), {
+          name: safeName(a.name), productId: pid, categoryId: mapCat(a.categoryId), thumb, chunkCount: n,
+          contentType: "image/png", sizeBytes: f.size, width, height, isFavorite: !!a.isFavorite,
+          createdAt: fromMs(a.createdAt), updatedAt: serverTimestamp(),
+        }));
+        if (!restored.has(pid)) restored.set(pid, []);
+        restored.get(pid).push(a.id);
         report.done++;
-      } catch (e) { report.skipped.push(`${a.name} (${friendly(e)})`); }
+      } catch (e) { await undoChunks(a.id, written); report.skipped.push(`${a.name} (${friendly(e)})`); }
     }
     // Capas: só se apontarem para uma arte realmente restaurada.
     const cb = writeBatch(db); let cn = 0;
     newProds.forEach((p) => {
-      const paths = restoredPaths.get(p.id);
-      if (paths?.length) { cb.update(doc(db, "products", p.id), { coverStoragePath: paths.includes(p.coverStoragePath) ? p.coverStoragePath : paths[0] }); cn++; }
+      const ids = restored.get(p.id);
+      if (ids?.length) { cb.update(doc(db, "products", p.id), { coverArtId: ids.includes(p.coverArtId) ? p.coverArtId : ids[0] }); cn++; }
     });
     if (cn) await cb.commit();
     pm.close();

@@ -1,6 +1,6 @@
 // Configuração do projeto Firebase "impressao-de-produto".
 // Estes valores identificam o projeto e são públicos por natureza em apps web;
-// a proteção real está nas regras do Firestore/Storage (veja README.md).
+// a proteção real está nas regras do Firestore (veja README.md).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
@@ -8,7 +8,6 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getStorage } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
 
 export const firebaseConfig = {
   apiKey: "AIzaSyAYBVwu1_YryRGcK06A0Uazx_y4uozfgYs",
@@ -28,8 +27,4 @@ export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 });
 
-export const storage = getStorage(app);
-// Se o Storage estiver inativo, falha em ~30 s em vez de tentar por 10 minutos.
-storage.maxUploadRetryTime = 30000;
-storage.maxOperationRetryTime = 30000;
-// Analytics não é necessário para a biblioteca e foi deixado de fora de propósito.
+// Sem Firebase Storage: as imagens ficam no Firestore (miniatura no documento + PNG original em partes).
