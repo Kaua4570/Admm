@@ -707,6 +707,29 @@ async function validatePng(file) {
   try { bmp = await createImageBitmap(file); } catch { throw new Error("O PNG está corrompido ou não pôde ser lido."); }
   return bmp;
 }
+// PNG de verdade passa intacto. Outros formatos (JPG, WebP…) são convertidos para PNG sem perda adicional;
+// se o resultado passar do limite, reduz a resolução em etapas até caber.
+async function asPng(file) {
+  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  if (PNG_SIG.every((b, i) => head[i] === b)) return { file, converted: false };
+  let bmp;
+  try { bmp = await createImageBitmap(file); }
+  catch { throw new Error("Este arquivo não é uma imagem que o navegador consiga abrir (HEIC, por exemplo). Envie em JPG ou PNG."); }
+  try {
+    for (const cap of [4096, 3000, 2000, 1400]) {
+      const k = Math.min(1, cap / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+      cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+      const blob = await new Promise((r) => cv.toBlob(r, "image/png"));
+      if (blob && blob.size <= MAX_BYTES) {
+        return { file: new File([blob], file.name.replace(/\.[^.]+$/, "") + ".png", { type: "image/png" }), converted: true };
+      }
+    }
+  } finally { bmp.close?.(); }
+  throw new Error("Não foi possível converter para PNG dentro do limite de 10 MB.");
+}
+
 // Miniatura leve (vai dentro do documento da arte). WebP mantém a transparência; cai para PNG se preciso.
 async function makeThumbUrl(bmp) {
   let url = "";
@@ -738,7 +761,7 @@ const undoChunks = (artId, written) =>
 function pickAndUpload(productId) {
   if (!idx.prods.get(productId)) return;
   const inp = document.createElement("input");
-  inp.type = "file"; inp.accept = "image/png"; inp.multiple = true;
+  inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
   inp.onchange = () => { if (inp.files.length) startUploads(productId, [...inp.files]); };
   inp.click();
 }
@@ -752,7 +775,7 @@ function startUploads(productId, files) {
   const draw = () => {
     const box = $("#jobs", m.el); if (!box) return;
     box.innerHTML = jobs.map((j, i) => `<div class="row job ${j.status}"><div class="grow"><b>${esc(j.file.name)}</b>
-      <small>${j.status === "queued" ? "Na fila…" : j.status === "uploading" ? `Enviando… ${Math.round(j.pct * 100)}%` : j.status === "done" ? "Concluído" : esc(j.error)}</small>
+      <small>${j.status === "queued" ? "Na fila…" : j.status === "uploading" ? `Enviando… ${Math.round(j.pct * 100)}%` : j.status === "done" ? (j.converted ? "Concluído (convertida para PNG)" : "Concluído") : esc(j.error)}</small>
       <div class="bar"><i style="width:${Math.round((j.status === "done" ? 1 : j.pct) * 100)}%"></i></div></div>
       ${j.status === "error" ? `<button class="btn sm" data-retry="${i}">Tentar de novo</button>` : ""}</div>`).join("");
   };
@@ -763,16 +786,19 @@ function startUploads(productId, files) {
     try {
       const prod = idx.prods.get(job.productId);
       if (!prod) throw new Error("O produto não existe mais.");
-      const bmp = await validatePng(job.file);
+      const prep = await asPng(job.file);
+      const file = prep.file;
+      job.converted = prep.converted;
+      const bmp = await validatePng(file);
       const width = bmp.width, height = bmp.height;
       const thumb = await makeThumbUrl(bmp);
       bmp.close?.();
-      const n = await writeChunks(job.id, job.file, (p) => { job.pct = p * 0.95; draw(); }, job.written);
+      const n = await writeChunks(job.id, file, (p) => { job.pct = p * 0.95; draw(); }, job.written);
       job.pct = 0.97; draw();
       const b = writeBatch(db);
       b.set(doc(db, "artworks", job.id), {
-        name: safeName(job.file.name.replace(/\.png$/i, "")), productId: prod.id, categoryId: prod.categoryId,
-        thumb, chunkCount: n, contentType: "image/png", sizeBytes: job.file.size, width, height,
+        name: safeName(job.file.name.replace(/\.[^.]+$/, "")), productId: prod.id, categoryId: prod.categoryId,
+        thumb, chunkCount: n, contentType: "image/png", sizeBytes: file.size, width, height,
         isFavorite: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       if (!idx.prods.get(prod.id)?.coverArtId) b.update(doc(db, "products", prod.id), { coverArtId: job.id, updatedAt: serverTimestamp() });
